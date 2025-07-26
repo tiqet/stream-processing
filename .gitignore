@@ -1,0 +1,148 @@
+# Rust build artifacts
+/target/
+/Cargo.lock
+
+# Note: Cargo.lock is gitignored for libraries but should be committed for applications
+# If this becomes an application rather than a library, remove Cargo.lock from this file
+
+# Rust backtraces and debug info
+*.pdb
+
+# IDE and Editor files
+# VS Code
+.vscode/
+*.code-workspace
+
+# IntelliJ IDEA / CLion / RustRover
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Atom
+.atom/
+
+# Operating System files
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.nfs*
+
+# Benchmark and test artifacts
+benchmark_results.txt
+benchmark_output/
+*.bench
+perf.data
+perf.data.old
+
+# Coverage reports
+lcov.info
+coverage/
+*.profraw
+*.profdata
+tarpaulin-report.html
+cobertura.xml
+
+# Documentation build artifacts
+/doc/
+/docs/_build/
+target/doc/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+/tmp/
+/temp/
+
+# Environment and configuration
+.env
+.env.local
+.env.*.local
+
+# Package manager artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Flamegraph artifacts
+flamegraph.svg
+perf.data*
+
+# Criterion benchmark output
+target/criterion/
+
+# Memory profiling
+massif.out.*
+callgrind.out.*
+
+# Core dumps
+core
+core.*
+
+# Security scanning artifacts
+.security-audit.json
+
+# Local development helpers
+run.sh
+build.sh
+deploy.sh
+dev-notes.md
+todo.txt
+
+# Docker artifacts (if added later)
+Dockerfile.local
+docker-compose.override.yml
+
+# Kubernetes artifacts (if added later)
+*.local.yaml
+*.local.yml
+
+# Misc development artifacts
+.scratch/
+playground/
+experiments/

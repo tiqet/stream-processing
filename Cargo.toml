@@ -1,0 +1,27 @@
+[package]
+name = "stream-processing"
+version = "0.1.0"
+description = "High-performance stream processing with intelligent batching"
+keywords = ["stream", "async", "tokio", "batch", "events"]
+categories = ["asynchronous", "data-structures"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/stream-processing"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+num_cpus = "1.0"
+
+[[example]]
+name = "benchmark"
+path = "examples/benchmark.rs"
+
+[[example]]
+name = "realistic_benchmark"
+path = "examples/realistic_benchmark.rs"
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
