@@ -67,32 +67,13 @@ impl ProcessingMetrics {
 // STREAM PROCESSOR CONFIGURATION
 // ============================================================================
 
-/// Additional configuration for error handling
-#[derive(Debug, Clone)]
-pub struct ErrorHandlingConfig {
-    pub fail_fast: bool,       // Stop batch on first error
-    pub max_retries: usize,    // Retry failed batches
-    pub retry_delay: Duration, // Delay between retries
-}
-
-impl Default for ErrorHandlingConfig {
-    fn default() -> Self {
-        Self {
-            fail_fast: false,
-            max_retries: 0,
-            retry_delay: Duration::from_millis(100),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ProcessorConfig {
-    pub buffer_size: usize,                  // Channel buffer size
-    pub worker_count: usize,                 // Number of parallel workers
-    pub processing_timeout: Duration,        // Max time per event
-    pub batch_size: usize,                   // Events per batch (1 = no batching)
-    pub batch_timeout: Duration,             // Max time to wait for batch to fill
-    pub error_handling: ErrorHandlingConfig, // Error handling strategy
+    pub buffer_size: usize,           // Channel buffer size
+    pub worker_count: usize,          // Number of parallel workers
+    pub processing_timeout: Duration, // Max time per event
+    pub batch_size: usize,            // Events per batch (1 = no batching)
+    pub batch_timeout: Duration,      // Max time to wait for batch to fill
 }
 
 impl Default for ProcessorConfig {
@@ -103,7 +84,6 @@ impl Default for ProcessorConfig {
             processing_timeout: Duration::from_secs(30),
             batch_size: 1,
             batch_timeout: Duration::from_millis(100),
-            error_handling: ErrorHandlingConfig::default(),
         }
     }
 }
@@ -185,7 +165,7 @@ where
         drop(self.sender);
     }
 
-    /// Core processing loop
+    /// Core processing loop - completely optimized with zero Arc::clone calls
     async fn run_processor<F, Fut>(
         mut rx: mpsc::Receiver<T>,
         mut shutdown_rx: oneshot::Receiver<()>,
@@ -198,12 +178,8 @@ where
             + Send
             + 'static,
     {
+        // Store processor function for efficient access
         let processor_fn = Arc::new(processor_fn);
-        let mut batch = Vec::with_capacity(config.batch_size);
-        let mut last_batch_time = Instant::now();
-
-        // Optimization: Reuse the same Arc reference to avoid cloning
-        let processor_ref = &processor_fn;
 
         // Fast path for single-event processing (no batching overhead)
         if config.batch_size == 1 {
@@ -212,12 +188,29 @@ where
                     event = rx.recv() => {
                         match event {
                             Some(event) => {
-                                Self::process_single_event(
-                                    event,
-                                    Arc::clone(processor_ref),
-                                    &config,
-                                    &metrics,
+                                // Inline single-event processing for maximum efficiency
+                                let start_time = Instant::now();
+
+                                // Process with timeout - Arc<F> can be called directly
+                                let result = timeout(
+                                    config.processing_timeout,
+                                    processor_fn(vec![event])
                                 ).await;
+
+                                let processing_time_ms = start_time.elapsed().as_millis() as u64;
+
+                                match result {
+                                    Ok(Ok(())) => {
+                                        metrics.inc_processed();
+                                        metrics.update_avg_time(processing_time_ms);
+                                    }
+                                    Ok(Err(_)) => {
+                                        metrics.inc_errors();
+                                    }
+                                    Err(_) => {
+                                        metrics.inc_timeouts();
+                                    }
+                                }
                             }
                             None => break,
                         }
@@ -228,28 +221,56 @@ where
             return;
         }
 
-        // Batched processing loop
+        // Batched processing path
+        let mut batch = Vec::with_capacity(config.batch_size);
+        let mut last_batch_time = Instant::now();
+
         loop {
             let should_process_batch = batch.len() >= config.batch_size
                 || (last_batch_time.elapsed() >= config.batch_timeout && !batch.is_empty());
 
             if should_process_batch {
                 let batch_to_process = std::mem::take(&mut batch);
-                Self::process_batch(
-                    batch_to_process,
-                    Arc::clone(processor_ref),
-                    &config,
-                    &metrics,
-                )
-                .await;
+
+                // Inline batch processing for maximum efficiency - zero Arc::clone calls
+                let start_time = Instant::now();
+                let batch_size = batch_to_process.len();
+
+                // Process with timeout - Arc<F> can be called directly
+                let result =
+                    timeout(config.processing_timeout, processor_fn(batch_to_process)).await;
+
+                let processing_time_ms = start_time.elapsed().as_millis() as u64;
+
+                match result {
+                    Ok(Ok(())) => {
+                        // Success - update metrics for entire batch
+                        for _ in 0..batch_size {
+                            metrics.inc_processed();
+                        }
+                        metrics.update_avg_time(processing_time_ms);
+                    }
+                    Ok(Err(_)) => {
+                        // Processing error
+                        for _ in 0..batch_size {
+                            metrics.inc_errors();
+                        }
+                    }
+                    Err(_) => {
+                        // Timeout
+                        for _ in 0..batch_size {
+                            metrics.inc_timeouts();
+                        }
+                    }
+                }
+
                 last_batch_time = Instant::now();
                 continue;
             }
 
-            // Use deadline instead of sleep for better efficiency
+            // Efficient timeout calculation
             let batch_deadline = if batch.is_empty() {
-                // No deadline if batch is empty
-                tokio::time::sleep(Duration::from_secs(3600)) // Very long sleep as placeholder
+                tokio::time::sleep(Duration::from_secs(3600)) // Long sleep when no batch
             } else {
                 tokio::time::sleep(
                     config
@@ -259,7 +280,7 @@ where
             };
 
             tokio::select! {
-                biased; // Process events with higher priority than timeout
+                biased; // Prioritize events over timeouts
 
                 // New event received
                 event = rx.recv() => {
@@ -273,12 +294,35 @@ where
                         None => {
                             // Channel closed - process remaining batch and exit
                             if !batch.is_empty() {
-                                Self::process_batch(
-                                    batch,
-                                    Arc::clone(processor_ref),
-                                    &config,
-                                    &metrics,
+                                // Inline final batch processing
+                                let start_time = Instant::now();
+                                let batch_size = batch.len();
+
+                                let result = timeout(
+                                    config.processing_timeout,
+                                    processor_fn(batch)
                                 ).await;
+
+                                let processing_time_ms = start_time.elapsed().as_millis() as u64;
+
+                                match result {
+                                    Ok(Ok(())) => {
+                                        for _ in 0..batch_size {
+                                            metrics.inc_processed();
+                                        }
+                                        metrics.update_avg_time(processing_time_ms);
+                                    }
+                                    Ok(Err(_)) => {
+                                        for _ in 0..batch_size {
+                                            metrics.inc_errors();
+                                        }
+                                    }
+                                    Err(_) => {
+                                        for _ in 0..batch_size {
+                                            metrics.inc_timeouts();
+                                        }
+                                    }
+                                }
                             }
                             break;
                         }
@@ -289,12 +333,35 @@ where
                 _ = &mut shutdown_rx => {
                     // Process remaining batch and exit
                     if !batch.is_empty() {
-                        Self::process_batch(
-                            batch,
-                            Arc::clone(processor_ref),
-                            &config,
-                            &metrics,
+                        // Inline final batch processing
+                        let start_time = Instant::now();
+                        let batch_size = batch.len();
+
+                        let result = timeout(
+                            config.processing_timeout,
+                            processor_fn(batch)
                         ).await;
+
+                        let processing_time_ms = start_time.elapsed().as_millis() as u64;
+
+                        match result {
+                            Ok(Ok(())) => {
+                                for _ in 0..batch_size {
+                                    metrics.inc_processed();
+                                }
+                                metrics.update_avg_time(processing_time_ms);
+                            }
+                            Ok(Err(_)) => {
+                                for _ in 0..batch_size {
+                                    metrics.inc_errors();
+                                }
+                            }
+                            Err(_) => {
+                                for _ in 0..batch_size {
+                                    metrics.inc_timeouts();
+                                }
+                            }
+                        }
                     }
                     break;
                 }
@@ -302,89 +369,38 @@ where
                 // Batch timeout for partial batches
                 _ = batch_deadline, if !batch.is_empty() => {
                     let batch_to_process = std::mem::take(&mut batch);
-                    Self::process_batch(
-                        batch_to_process,
-                        Arc::clone(processor_ref),
-                        &config,
-                        &metrics,
+
+                    // Inline batch processing for timeout case
+                    let start_time = Instant::now();
+                    let batch_size = batch_to_process.len();
+
+                    let result = timeout(
+                        config.processing_timeout,
+                        processor_fn(batch_to_process)
                     ).await;
+
+                    let processing_time_ms = start_time.elapsed().as_millis() as u64;
+
+                    match result {
+                        Ok(Ok(())) => {
+                            for _ in 0..batch_size {
+                                metrics.inc_processed();
+                            }
+                            metrics.update_avg_time(processing_time_ms);
+                        }
+                        Ok(Err(_)) => {
+                            for _ in 0..batch_size {
+                                metrics.inc_errors();
+                            }
+                        }
+                        Err(_) => {
+                            for _ in 0..batch_size {
+                                metrics.inc_timeouts();
+                            }
+                        }
+                    }
+
                     last_batch_time = Instant::now();
-                }
-            }
-        }
-    }
-
-    /// Fast path for single event processing (no batching overhead)
-    async fn process_single_event<F, Fut>(
-        event: T,
-        processor_fn: Arc<F>,
-        config: &ProcessorConfig,
-        metrics: &ProcessingMetrics,
-    ) where
-        F: Fn(Vec<T>) -> Fut + Send + Sync,
-        Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>
-            + Send
-            + 'static,
-    {
-        let start_time = Instant::now();
-
-        // Process with timeout
-        let result = timeout(config.processing_timeout, (*processor_fn)(vec![event])).await;
-
-        let processing_time_ms = start_time.elapsed().as_millis() as u64;
-
-        match result {
-            Ok(Ok(())) => {
-                metrics.inc_processed();
-                metrics.update_avg_time(processing_time_ms);
-            }
-            Ok(Err(_)) => {
-                metrics.inc_errors();
-            }
-            Err(_) => {
-                metrics.inc_timeouts();
-            }
-        }
-    }
-
-    /// Process a batch of events with timeout and error handling
-    async fn process_batch<F, Fut>(
-        batch: Vec<T>,
-        processor_fn: Arc<F>,
-        config: &ProcessorConfig,
-        metrics: &ProcessingMetrics,
-    ) where
-        F: Fn(Vec<T>) -> Fut + Send + Sync,
-        Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>
-            + Send
-            + 'static,
-    {
-        let start_time = Instant::now();
-        let batch_size = batch.len();
-
-        // Process with timeout
-        let result = timeout(config.processing_timeout, (*processor_fn)(batch)).await;
-
-        let processing_time_ms = start_time.elapsed().as_millis() as u64;
-
-        match result {
-            Ok(Ok(())) => {
-                // Success
-                for _ in 0..batch_size {
-                    metrics.inc_processed();
-                }
-                metrics.update_avg_time(processing_time_ms);
-            }
-            Ok(Err(_)) => {
-                // Processing error
-                for _ in 0..batch_size {
-                    metrics.inc_errors();
-                }
-            }
-            Err(_) => {
-                // Timeout
-                for _ in 0..batch_size {
-                    metrics.inc_timeouts();
                 }
             }
         }
@@ -417,7 +433,7 @@ where
 }
 
 // ============================================================================
-// USAGE EXAMPLE
+// USAGE EXAMPLE IN TESTS
 // ============================================================================
 
 #[cfg(test)]
@@ -472,7 +488,6 @@ mod example {
             processing_timeout: Duration::from_secs(5),
             batch_size: 10, // Process events in batches of 10
             batch_timeout: Duration::from_millis(100),
-            error_handling: Default::default(),
         };
 
         let processor = StreamProcessor::new(config, process_events);

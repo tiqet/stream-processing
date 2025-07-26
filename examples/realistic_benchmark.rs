@@ -70,7 +70,6 @@ impl RealisticBenchmark {
             batch_timeout: Duration::from_millis(1), // Very fast batching
             processing_timeout: Duration::from_secs(10),
             worker_count: num_cpus::get(),
-            ..Default::default()
         };
 
         let processor = StreamProcessor::new(config, {
