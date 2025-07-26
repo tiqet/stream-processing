@@ -45,27 +45,18 @@ impl RealisticBenchmark {
     }
 
     async fn run_cpu_bound_test(&self, events: usize, batch_size: usize) {
-        println!(
-            "🖥️  CPU-Bound Test: {} events, batch: {}",
-            events, batch_size
-        );
+        println!("🖥️  CPU-Bound Test: {events} events, batch: {batch_size}");
         self.run_test(events, batch_size, TestType::CpuBound).await;
     }
 
     async fn run_io_simulation_test(&self, events: usize, batch_size: usize) {
-        println!(
-            "💾 I/O Simulation Test: {} events, batch: {}",
-            events, batch_size
-        );
+        println!("💾 I/O Simulation Test: {events} events, batch: {batch_size}");
         self.run_test(events, batch_size, TestType::IoSimulation)
             .await;
     }
 
     async fn run_mixed_workload_test(&self, events: usize, batch_size: usize) {
-        println!(
-            "🔄 Mixed Workload Test: {} events, batch: {}",
-            events, batch_size
-        );
+        println!("🔄 Mixed Workload Test: {events} events, batch: {batch_size}");
         self.run_test(events, batch_size, TestType::Mixed).await;
     }
 
@@ -218,14 +209,11 @@ impl RealisticBenchmark {
         let (proc_processed, errors, timeouts, proc_avg_time) = processor.metrics();
 
         println!("  📈 RESULTS:");
-        println!("     Throughput: {:} events/sec", throughput);
+        println!("     Throughput: {throughput:} events/sec");
         println!("     Total Time: {:.2}s", total_time.as_secs_f64());
         println!("     Avg Processing: {}μs per event", avg_proc_time * 1000);
-        println!(
-            "     Processor Metrics: {}/{}/{} (proc/err/timeout)",
-            proc_processed, errors, timeouts
-        );
-        println!("     Library Overhead: {}ms", proc_avg_time);
+        println!("     Processor Metrics: {proc_processed}/{errors}/{timeouts} (proc/err/timeout)");
+        println!("     Library Overhead: {proc_avg_time}ms");
 
         processor.shutdown().await;
         println!();
